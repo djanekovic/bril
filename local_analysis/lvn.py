@@ -1,5 +1,8 @@
+import logging
 import json
 import sys
+
+# TODO: handle nonlocal elements
 
 class LVN_TableRow:
     def __init__(self, idx, value, variable):
@@ -9,6 +12,22 @@ class LVN_TableRow:
 
     def __repr__(self):
         return f"{{idx: {self.idx}, value: {self.value}, variable: {self.variable}}}"
+
+COMMUTATIVE_OPS = "add", "mul", "eq", "and", "or"
+
+compute_value = {
+    "add": lambda x, y: x + y,
+    "mul": lambda x, y: x * y,
+    "and": lambda x, y: x and y,
+    "or": lambda x, y: x or y,
+    "not": lambda x: not x,
+    "div": lambda x, y: x / y,
+    "eq": lambda x, y: x == y,
+    "le": lambda x, y: x <= y,
+    "lt": lambda x, y: x < y,
+    "ge": lambda x, y: x >= y,
+    "gt": lambda x, y: x > y,
+}
 
 class LVN():
     def __init__(self):
@@ -28,22 +47,44 @@ class LVN():
         '''
         if instr["op"] == "const":
             return ("const", instr["value"])
-        return (instr["op"], *[self._table[self._environment[arg]].idx for arg in instr["args"]])
+        args_idx = [self._table[self._environment[arg]].idx for arg in instr["args"]]
+        logging.debug(f"Instr['args']: {instr['args']}, args_idx: {args_idx}")
+
+        # check if some args are compile time constants, if yes, do const propagation
+        arg_rows = [self._table[arg] for arg in args_idx]
+        if all(map(lambda x: x.value[0] == "const", arg_rows)):
+            logging.debug("All args are compile time constants -> doing constant propagation")
+            # This is a bit complicated... x.value is tuple so here I get [(True,), (False,)]
+            # I have to go over each one more to in order to pull first element, after that
+            # I have list of values such as True, False or 42
+            args = [i[0] for i in map(lambda x: x.value[1:], arg_rows)]
+            try:
+                val = ("const", compute_value[instr["op"]](*args))
+            except ZeroDivisionError:
+                val = ("const", 0)
+            logging.debug(f"Generated {instr} -> {val}")
+            return val
+
+        if instr["op"] in COMMUTATIVE_OPS:
+            return (instr["op"], sorted(args_idx))
+        return (instr["op"], args_idx)
 
     def get_cannonical_variable_names(self, variables):
         return [self._table[self._environment[var]].variable for var in variables]
 
     def reconstruct_instr(self, instr, variable, value):
-        #print (self._table[self._environment[variable]], value)
         new_instr = instr
+
+        # if cannonical variables are the same we can just copy values
         if self._table[self._environment[variable]].variable != variable:
-            #print ("We have exact match, we can just copy value")
+            logging.debug("We have exact match, we can just copy value")
+            # TODO: if we are matching compile time constant, it would be better to generate const than id
             new_instr = {"op": "id", "type": "int", "dest": variable, "args": [self._table[self._environment[variable]].variable] }
         elif "args" not in instr:
             new_instr = instr
         else:
             new_instr["args"] = self.get_cannonical_variable_names(instr["args"])
-        #print ("Generated new instr: ", new_instr)
+        logging.debug(f"Generated new instr: {new_instr}")
         return new_instr
 
     def update_table(self, value, variable):
@@ -51,8 +92,8 @@ class LVN():
         new_row_idx = len(self._table)
         new_row = LVN_TableRow(new_row_idx, value, variable)
 
-        #print ("Adding new row ", new_row)
-        #print (f"Linking {variable} -> {new_row}")
+        logging.debug(f"Adding new row: {new_row}")
+        logging.debug(f"Linking {variable} -> {new_row}")
         self._table.append(new_row)
         self._environment[variable] = new_row_idx
 
@@ -61,13 +102,19 @@ class LVN():
         for instr in block:
             # this is not a value operation
             if "dest" not in instr:
+                logging.debug(f"Handling non value instr: {instr}")
+                if "args" not in instr:
+                    # this is a label
+                    new_block.append(instr)
+                    continue
+
                 # find cannonical home for args
                 instr["args"] = [self._table[self._environment[arg]].variable for arg in instr["args"]]
                 new_block.append(instr)
                 continue
 
-            #print("Table and env before iteration", self._table, self._environment)
-            #print("We are LVN-ing this instr: ", instr)
+            logging.debug(f"Table and env before iteration {self._table}, {self._environment}")
+            logging.debug(f"We are LVN-ing this instr: {instr}")
             # 1. cannonicalize value
             val = self.cannonicalize_val(instr)
             # 2. query the table, do we have that value already?
@@ -76,22 +123,20 @@ class LVN():
             if row is not None:
                 # 3. reuse the value since we have it in a table already
                 # we will generate a simple copy instruction
-                # new_block.append({"op": "id", "args": [row.variable]})
 
                 # get idx of a row where val is in the table
                 self._environment[variable] = row.idx
-                #print (f"Value exists in the table, I am just adding link {variable} -> {row}")
+                logging.debug(f"Value exists in the table, I am just adding link {variable} -> {row}")
             else:
-                #print("Value does not exist in the table, we are adding it")
+                logging.debug("Value does not exist in the table, we are adding it")
 
                 # 4. add new row in the table
                 self.update_table(val, variable)
 
-            #print (f"Reconstructing instr: {instr} with cannonical_value: {val} and variable name {variable}")
+            logging.debug(f"Reconstructing instr: {instr} with cannonical_value: {val} and variable name {variable}")
             new_block.append(self.reconstruct_instr(instr, variable, val))
-            #print("\n")
+            logging.debug("\n")
 
-        #print ("new block: ", new_block)
         return new_block
 
 
@@ -142,4 +187,5 @@ def main():
     print (json.dumps(prog, indent=2))
 
 if __name__ == "__main__":
+    #logging.basicConfig(level=logging.DEBUG)
     main()
