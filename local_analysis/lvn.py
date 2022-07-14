@@ -21,7 +21,6 @@ class LVN_TableRow:
         return self.is_const() or self.is_id()
 
 
-
 COMMUTATIVE_OPS = "add", "mul", "eq", "and", "or"
 COMPARISON_OPS = "eq", "lt", "gt", "le", "ge"
 
@@ -40,7 +39,8 @@ compute_value = {
 }
 
 def is_variable_overwritten_later(block, variable, i):
-    return next((True for instr in block[i+1:] if "dest" in instr and instr["dest"] == variable), False)
+    return next((True for instr in block[i+1:]
+        if "dest" in instr and instr["dest"] == variable), False)
 
 class LVN():
     def __init__(self):
@@ -53,7 +53,7 @@ class LVN():
         """
         Return first row that has the same cannonical value or None otherwise
         """
-        return next((row for row in self._table if row.value is not None and row.value == value), None)
+        return next((row for row in self._table if row.value == value), None)
 
     def is_nonlocal(self, arg):
         return arg not in self._environment
@@ -89,7 +89,7 @@ class LVN():
 
         # if instr is "id" it has just one argument,
         # that's why I can just take first element
-        if instr["op"] == "id" and arg_rows[0].is_copy_foldable():
+        if instr["op"] == "id":
             # fold copy
             val = arg_rows[0].value
             logging.debug(f"Copy instr {instr} is foldable, generating {val}!")
@@ -98,9 +98,9 @@ class LVN():
         if all(row.is_const() for row in arg_rows):
             logging.debug("All args are compile time constants -> doing constant propagation")
             # List of values such as True, False or 42
-            args = [i for i in map(lambda x: x.value[1], arg_rows)]
+            instr_args = [i for i in map(lambda x: x.value[1], arg_rows)]
             try:
-                val = ("const", compute_value[instr["op"]](*args))
+                val = ("const", compute_value[instr["op"]](*instr_args))
             except ZeroDivisionError:
                 val = ("const", 0)
             logging.debug(f"Generated {instr} -> {val}")
@@ -128,7 +128,14 @@ class LVN():
         new_instr = instr
 
         # if cannonical variables are the same we can just copy values
-        if value[0] == "const":
+        if value is None:
+            logging.debug("We have a nonlocal value, generate a copy instruction")
+            new_instr = {
+                    "op": "id",
+                    "type": instr["type"],
+                    "dest": instr["dest"],
+                    "args": self.get_cannonical_variable_names([variable]) }
+        elif value[0] == "const":
             logging.debug("We have a const value, generate a const instruction")
             new_instr = {
                     "op": value[0],
@@ -146,8 +153,6 @@ class LVN():
                     }
         elif self._table[self._environment[variable]].variable != variable:
             logging.debug("We have exact match, we can just copy value")
-            # TODO: if we are matching compile time constant,
-            # it would be better to generate const than id
             new_instr = {
                     "op": "id",
                     "type": instr["type"],
@@ -264,5 +269,5 @@ def main():
     print (json.dumps(prog, indent=2))
 
 if __name__ == "__main__":
-    #logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.DEBUG)
     main()
