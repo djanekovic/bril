@@ -14,12 +14,11 @@ class LVN_TableRow:
     def is_const(self):
         return self.value is not None and self.value[0] == "const"
 
-    def is_copy_foldable(self):
-        #TODO: I think this will become more complicated...
-        return self.is_const()
+    def is_id(self):
+        return self.value is not None and self.value[0] == "id"
 
-    def fold_copy(self):
-        return ("const", self.value[1])
+    def is_copy_foldable(self):
+        return self.is_const() or self.is_id()
 
 
 
@@ -90,9 +89,9 @@ class LVN():
 
         # if instr is "id" it has just one argument,
         # that's why I can just take first element
-        # TODO: this thing does not understand if value is not local
         if instr["op"] == "id" and arg_rows[0].is_copy_foldable():
-            val = arg_rows[0].fold_copy()
+            # fold copy
+            val = arg_rows[0].value
             logging.debug(f"Copy instr {instr} is foldable, generating {val}!")
             return val
 
@@ -137,6 +136,14 @@ class LVN():
                     "dest": instr["dest"],
                     "value": value[1]
             }
+        elif value[0] == "id":
+            logging.debug("We have a copy value, generate a copy instruction")
+            new_instr = {
+                    "op": value[0],
+                    "type": instr["type"],
+                    "dest": instr["dest"],
+                    "args": [self._table[value[1][0]].variable]
+                    }
         elif self._table[self._environment[variable]].variable != variable:
             logging.debug("We have exact match, we can just copy value")
             # TODO: if we are matching compile time constant,
@@ -243,8 +250,6 @@ def form_blocks(function):
             print ("Unhandled instr in form_blocks: ", instr)
     if block:
         yield block
-
-#TODO: idchain-nonlocal
 
 def main():
     prog = json.load(sys.stdin)
