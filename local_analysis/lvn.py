@@ -2,8 +2,6 @@ import logging
 import json
 import sys
 
-# TODO: handle nonlocal elements
-
 class LVN_TableRow:
     def __init__(self, idx, value, variable):
         self.idx = idx
@@ -13,21 +11,37 @@ class LVN_TableRow:
     def __repr__(self):
         return f"{{idx: {self.idx}, value: {self.value}, variable: {self.variable}}}"
 
+    def is_const(self):
+        return self.value is not None and self.value[0] == "const"
+
+    def is_copy_foldable(self):
+        #TODO: I think this will become more complicated...
+        return self.is_const()
+
+    def fold_copy(self):
+        return ("const", self.value[1])
+
+
+
 COMMUTATIVE_OPS = "add", "mul", "eq", "and", "or"
+COMPARISON_OPS = "eq", "lt", "gt", "le", "ge"
 
 compute_value = {
     "add": lambda x, y: x + y,
     "mul": lambda x, y: x * y,
     "and": lambda x, y: x and y,
     "or": lambda x, y: x or y,
-    "not": lambda x: not x,
     "div": lambda x, y: x / y,
     "eq": lambda x, y: x == y,
     "le": lambda x, y: x <= y,
     "lt": lambda x, y: x < y,
     "ge": lambda x, y: x >= y,
     "gt": lambda x, y: x > y,
+    "not": lambda x: not x,
 }
+
+def is_variable_overwritten_later(block, variable, i):
+    return next((True for instr in block[i+1:] if "dest" in instr and instr["dest"] == variable), False)
 
 class LVN():
     def __init__(self):
@@ -40,29 +54,68 @@ class LVN():
         """
         Return first row that has the same cannonical value or None otherwise
         """
-        return next((row for row in self._table if row.value == value), None)
+        return next((row for row in self._table if row.value is not None and row.value == value), None)
+
+    def is_nonlocal(self, arg):
+        return arg not in self._environment
+
+    def add_nonlocal_values_to_table(self, instr):
+        for arg in instr["args"]:
+            if self.is_nonlocal(arg):
+                logging.debug(f"Argument {arg} is non-local")
+                self.update_table(None, arg)
 
     def cannonicalize_val(self, instr):
-        '''Generate cannonical value representation
+        '''Generate cannonical value representation.
+
+        Instruction semantics and fold support should be handled here. If you
+        reach value we don't have in the table add new row in the table + env
+        with value = None.
+
+        Everything else should just work!
         '''
+        # check if any of arguments in instr is not in table -> nonlocal
+        if "args" in instr and any(self.is_nonlocal(arg) for arg in instr["args"]):
+            self.add_nonlocal_values_to_table(instr)
+
+        # Cannonicalization pass starts here
+
         if instr["op"] == "const":
             return ("const", instr["value"])
+
+        # get table row id of each arg
         args_idx = [self._table[self._environment[arg]].idx for arg in instr["args"]]
         logging.debug(f"Instr['args']: {instr['args']}, args_idx: {args_idx}")
-
-        # check if some args are compile time constants, if yes, do const propagation
         arg_rows = [self._table[arg] for arg in args_idx]
-        if all(map(lambda x: x.value[0] == "const", arg_rows)):
+
+        # if instr is "id" it has just one argument,
+        # that's why I can just take first element
+        # TODO: this thing does not understand if value is not local
+        if instr["op"] == "id" and arg_rows[0].is_copy_foldable():
+            val = arg_rows[0].fold_copy()
+            logging.debug(f"Copy instr {instr} is foldable, generating {val}!")
+            return val
+
+        if all(row.is_const() for row in arg_rows):
             logging.debug("All args are compile time constants -> doing constant propagation")
-            # This is a bit complicated... x.value is tuple so here I get [(True,), (False,)]
-            # I have to go over each one more to in order to pull first element, after that
-            # I have list of values such as True, False or 42
-            args = [i[0] for i in map(lambda x: x.value[1:], arg_rows)]
+            # List of values such as True, False or 42
+            args = [i for i in map(lambda x: x.value[1], arg_rows)]
             try:
                 val = ("const", compute_value[instr["op"]](*args))
             except ZeroDivisionError:
                 val = ("const", 0)
             logging.debug(f"Generated {instr} -> {val}")
+            return val
+        elif any(row.is_const() for row in arg_rows):
+            const_value = next((row.value[1] for row in arg_rows if row.is_const()))
+            if const_value == True and instr["op"] == "or" or const_value == False and instr["op"] == "and":
+                val = ("const", const_value)
+                logging.debug(f"We can fold instr to {val}");
+                return val
+        elif instr["op"] in COMPARISON_OPS and args_idx[0] == args_idx[1]:
+            # args are not compile time constant but they are the same
+            val = ("const", compute_value[instr["op"]](False, False))
+            logging.debug(f"Args are the same, we can fold {instr} -> {val}")
             return val
 
         if instr["op"] in COMMUTATIVE_OPS:
@@ -76,10 +129,23 @@ class LVN():
         new_instr = instr
 
         # if cannonical variables are the same we can just copy values
-        if self._table[self._environment[variable]].variable != variable:
+        if value[0] == "const":
+            logging.debug("We have a const value, generate a const instruction")
+            new_instr = {
+                    "op": value[0],
+                    "type": instr["type"],
+                    "dest": instr["dest"],
+                    "value": value[1]
+            }
+        elif self._table[self._environment[variable]].variable != variable:
             logging.debug("We have exact match, we can just copy value")
-            # TODO: if we are matching compile time constant, it would be better to generate const than id
-            new_instr = {"op": "id", "type": "int", "dest": variable, "args": [self._table[self._environment[variable]].variable] }
+            # TODO: if we are matching compile time constant,
+            # it would be better to generate const than id
+            new_instr = {
+                    "op": "id",
+                    "type": instr["type"],
+                    "dest": instr["dest"],
+                    "args": self.get_cannonical_variable_names([variable]) }
         elif "args" not in instr:
             new_instr = instr
         else:
@@ -99,7 +165,8 @@ class LVN():
 
     def reconstruct_block(self, block):
         new_block = []
-        for instr in block:
+        cnt = 0
+        for i, instr in enumerate(block):
             # this is not a value operation
             if "dest" not in instr:
                 logging.debug(f"Handling non value instr: {instr}")
@@ -109,7 +176,7 @@ class LVN():
                     continue
 
                 # find cannonical home for args
-                instr["args"] = [self._table[self._environment[arg]].variable for arg in instr["args"]]
+                instr["args"] = self.get_cannonical_variable_names(instr["args"])
                 new_block.append(instr)
                 continue
 
@@ -131,6 +198,10 @@ class LVN():
                 logging.debug("Value does not exist in the table, we are adding it")
 
                 # 4. add new row in the table
+                if is_variable_overwritten_later(block, variable, i):
+                    instr["dest"] = f"lvn.{cnt}"
+                    cnt += 1
+
                 self.update_table(val, variable)
 
             logging.debug(f"Reconstructing instr: {instr} with cannonical_value: {val} and variable name {variable}")
@@ -173,6 +244,7 @@ def form_blocks(function):
     if block:
         yield block
 
+#TODO: idchain-nonlocal
 
 def main():
     prog = json.load(sys.stdin)
