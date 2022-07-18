@@ -29,32 +29,35 @@ def form_blocks(function):
         yield block
 
 
-def get_label_block_map(function):
-    label2block = OrderedDict()
-    for block in form_blocks(function):
-        first_instr = block[0]
-        if "label" in first_instr:
-            label = first_instr["label"]
-            block = block[1:]
-        else:
-            label = f"label_{len(label2block)}"
-        label2block[label] = block
-    return label2block
-
 class CFG:
+    """
+    Control flow graph
+
+    Object represents control flow graph of one function. Graph
+    is computed upon construction.
+    """
     def __init__(self, function):
         self.function_name = function["name"]
-        self.cfg = self.generate_cfg(function)
+        # mapping from label name to block: {label: block/[instr]}
+        self.block_map = self.get_block_map(function)
+        # mapping from block_name to all successors of block_name: {label: [label]}
+        self.cfg = self.generate_cfg()
 
+    def get_block_map(self, function):
+        block_map = OrderedDict()
+        for block in form_blocks(function):
+            first_instr = block[0]
+            if "label" in first_instr:
+                label = first_instr["label"]
+                block = block[1:]
+            else:
+                label = f"label_{len(block_map)}"
+            block_map[label] = block
+        return block_map
 
-    def generate_cfg(self, function):
-        label2block = get_label_block_map(function)
-
-        # key in label2block is cfg vertex
-        # we need to add edges and we are done
-
+    def generate_cfg(self):
         cfg = {}
-        for i, (label, block) in enumerate(label2block.items()):
+        for i, (label, block) in enumerate(self.block_map.items()):
             last_instr = block[-1]
 
             if last_instr["op"] in ("jmp", "br"):
@@ -63,21 +66,15 @@ class CFG:
                 cfg[label] = []
             else:
                 # regular instruction, check if this is the last block -> do nothing
-                if i == len(label2block) - 1:
+                if i == len(self.block_map) - 1:
                     cfg[label] = []
                 else:
-                    cfg[label] = [list(label2block.keys())[i+1]]
+                    cfg[label] = [list(self.block_map.keys())[i+1]]
         return cfg
 
 
-def get_graphviz_cfg():
-    prog = json.load(sys.stdin)
-
+if __name__ == "__main__":
+    prog  = json.load(sys.stdin)
     for function in prog["functions"]:
         cfg = CFG(function)
-        graphviz_code = generate_graphviz_code(cfg.cfg, cfg.function_name)
-        print (graphviz_code)
-
-
-if __name__ == "__main__":
-    get_graphviz_cfg()
+        print (cfg.cfg)
