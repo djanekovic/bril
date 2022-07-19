@@ -17,6 +17,8 @@ class CFG:
         # mapping from block_name to all successors of block_name: {label: [label]}
         self.cfg = self.generate_cfg()
 
+        self.predecessors = self.generate_predecessors()
+
     def get_block_map(self, function):
         block_map = OrderedDict()
         for block in form_blocks(function):
@@ -45,6 +47,14 @@ class CFG:
                 else:
                     cfg[label] = [list(self.block_map.keys())[i+1]]
         return cfg
+
+    def generate_predecessors(self):
+        predecessors = {label: [] for label in self.cfg.keys()}
+        for label, block in self.cfg.items():
+            for succs in self.cfg[label]:
+                predecessors[succs].append(label)
+
+        return predecessors
 
 
 if __name__ == "__main__":
