@@ -4,7 +4,6 @@ import json
 from form_blocks import form_blocks
 from cfg import CFG
 
-
 """
 Instantiate this class when you want to do reachability analysis on a function
 
@@ -88,14 +87,13 @@ class ReachingDefinitions:
         print (f"Result: {res}")
         return res
 
-def dataflow():
-    prog = json.load(sys.stdin)
-
+def dataflow_rd(prog):
     for function in prog["functions"]:
         cfg  = CFG(function)
+        print (cfg.cfg)
         reaching_definitions = ReachingDefinitions(cfg.block_map)
 
-        worklist = cfg.block_map
+        worklist = cfg.block_map.copy()
         # these are mapping from block to the thing we need, here we are mapping from
         # block to the [(var_name, global_idx)]
         in_ = {block_name: set() for block_name in cfg.block_map.keys()}
@@ -103,13 +101,13 @@ def dataflow():
         out = {block_name: set() for block_name in cfg.block_map.keys()}
 
         first_block_name, first_block = worklist.popitem(last=False)
-        print (function)
-        for arg in function["args"]:
-            in_[first_block_name].add((arg["name"], -1))
+        if "args" in function:
+            [in_[first_block_name].add((arg["name"], -1)) for arg in function["args"]]
 
         out[first_block_name] = reaching_definitions.transfer(first_block, in_[first_block_name], first_block_name)
 
         print (f"Entering worklist loop, we have in: {in_} and out: {out}")
+        print (worklist)
         while len(worklist) > 0:
             block_name, block = worklist.popitem(last=False)
             print (f"Popping {block_name}:{block}")
@@ -118,6 +116,7 @@ def dataflow():
             if tmp_out != out[block_name]:
                 out[block_name] = tmp_out
                 for succ in cfg.cfg[block_name]:
+                    print (succ, worklist, cfg.block_map)
                     worklist[succ] = cfg.block_map[succ]
 
 
@@ -126,4 +125,5 @@ def dataflow():
             print (f"IN: {in_}, OUT: {out}")
 
 if __name__ == "__main__":
-    dataflow()
+    prog = json.load(sys.stdin)
+    dataflow_rd(prog)
