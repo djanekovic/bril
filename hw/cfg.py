@@ -16,6 +16,7 @@ class CFG:
         self.block_map = self.get_block_map(function)
         # mapping from block_name to all successors of block_name: {label: [label]}
         self.cfg = self.generate_cfg()
+        self.vertices = {vertex for vertex in self.cfg.keys()}
 
         self.predecessors = self.generate_predecessors()
 
