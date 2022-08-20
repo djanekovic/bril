@@ -1,6 +1,7 @@
 import sys
 import json
 import functools
+import collections
 
 from cfg import CFG
 
@@ -8,8 +9,40 @@ class Dominators:
     def __init__(self, function):
         cfg = CFG(function)
         self.dom = self._compute_dominators(cfg)
+        self.dominance_tree = self._compute_dominance_tree()
         print (cfg.cfg)
         print (self.dom)
+        print (self.dominance_tree)
+
+    def _compute_dominance_tree(self):
+        tree = {parent: [] for parent in self.dom.keys()}
+
+        # optimization, sort paths and insert into dict where key is length
+        tree_paths = {}
+        for sorted_paths in sorted(self.dom.values(), key=lambda x: len(x)):
+            path_length = len(sorted_paths)
+            tree_paths.setdefault(path_length, []).append(sorted_paths)
+
+        root = tree_paths[1][0]
+        root_node, = root
+        Q = collections.deque()
+        Q.append((root, root_node))
+
+        while len(Q) > 0:
+            parent_path, parent_node = Q.popleft()
+
+            if len(parent_path) + 1 not in tree_paths:
+                break
+
+            # find all child nodes of v
+            for child_path in tree_paths[len(parent_path) + 1]:
+                # maybe this is a child node from some other node, don't do anything
+                if len(child_path - parent_path) == 1:
+                    child_node, = child_path - parent_path
+                    tree[parent_node].append(child_node)
+                    Q.append((child_path, child_node))
+
+        return tree
 
     def _compute_dominators(self, cfg):
         all_vertices = cfg.vertices
