@@ -6,13 +6,28 @@ import collections
 from cfg import CFG
 
 class Dominators:
-    def __init__(self, function):
-        cfg = CFG(function)
+    def __init__(self, cfg):
         self.dom = self._compute_dominators(cfg)
         self.dominance_tree = self._compute_dominance_tree()
+        self.df = {node: self._compute_df(cfg, node) for node in cfg.cfg.keys()}
         print (cfg.cfg)
         print (self.dom)
         print (self.dominance_tree)
+        print (self.df)
+
+    # compute dominance frontier for a node N
+    def _compute_df(self, cfg, N):
+        df = []
+        # for each node in a cfg M
+        for M in cfg.cfg.keys():
+            # get M's successors Zs
+            for Z in cfg.cfg[M]:
+                # if N dominates M and if N does not dominate Z
+                if N in self.dom[M] and not (N in self.dom[Z] and Z != N):
+                    df.append(Z)
+
+        return df
+
 
     def _compute_dominance_tree(self):
         tree = {parent: [] for parent in self.dom.keys()}
@@ -73,4 +88,5 @@ class Dominators:
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
     for function in prog["functions"]:
-        d = Dominators(function)
+        cfg = CFG(function)
+        d = Dominators(cfg)
