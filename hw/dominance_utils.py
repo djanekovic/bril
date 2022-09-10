@@ -10,10 +10,6 @@ class Dominators:
         self.dom = self._compute_dominators(cfg)
         self.dominance_tree = self._compute_dominance_tree()
         self.df = {node: self._compute_df(cfg, node) for node in cfg.cfg.keys()}
-        print (cfg.cfg)
-        print (self.dom)
-        print (self.dominance_tree)
-        print (self.df)
 
     # compute dominance frontier for a node N
     def _compute_df(self, cfg, N):
