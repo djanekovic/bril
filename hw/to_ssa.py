@@ -82,9 +82,18 @@ def recursive_rename(x, dom, cfg, C, S):
 
 
 
-def rename_phi_nodes(cfg, dom, variable_assignment_map):
+def rename_phi_nodes(cfg, dom, variable_assignment_map, args):
     C = {x: 0 for x in variable_assignment_map.keys()}
     S = {x: [] for x in variable_assignment_map.keys()}
+
+    for arg in args:
+        arg_name = arg["name"]
+        C.setdefault(arg_name, 0)
+        S.setdefault(arg_name, [])
+        i = C[arg_name]
+        S[arg_name].append(i)
+        C[arg_name] += 1
+        arg["name"] = f"{arg_name}_{i}"
 
     recursive_rename(list(cfg.block_map)[0], dom, cfg, C, S)
 
@@ -97,7 +106,7 @@ if __name__ == "__main__":
         dom = dominance_utils.Dominators(cfg)
 
         insert_phi_nodes(cfg, dom, variable_assignment_map)
-        rename_phi_nodes(cfg, dom, variable_assignment_map)
+        rename_phi_nodes(cfg, dom, variable_assignment_map, function.get("args", []))
 
         new_function_instrs = []
         for name, block in cfg.block_map.items():
